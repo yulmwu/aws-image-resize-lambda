@@ -1,0 +1,22 @@
+{
+    "name": "aws-image-resize-lambda",
+    "version": "1.0.0",
+    "main": "dist/index.js",
+    "scripts": {
+        "build": "node esbuild.config.js",
+        "zip": "zip -r bundle.zip dist",
+        "typecheck": "tsc --noEmit",
+        "start": "node dist/index.js"
+    },
+    "devDependencies": {
+        "@types/aws-lambda": "^8.10.152",
+        "@types/node": "^24.3.0",
+        "esbuild": "^0.20.0",
+        "typescript": "^5.4.0"
+    },
+    "dependencies": {
+        "@aws-sdk/client-s3": "^3.864.0",
+        "aws-lambda": "^1.0.7",
+        "sharp": "^0.34.3"
+    }
+}
