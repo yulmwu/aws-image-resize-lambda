@@ -6,9 +6,7 @@ const s3 = new S3Client({
     region: 'ap-northeast-2',
 })
 
-type AllowedFmt = 'png' | 'jpg' | 'jpeg' | 'webp' | 'gif'
-
-const ALLOWED_FMTS: AllowedFmt[] = ['png', 'jpg', 'jpeg', 'webp', 'gif']
+const IMAGE_FORMATS = ['png', 'jpg', 'jpeg', 'webp', 'gif']
 
 const toInt = (v?: string, min = 1, max = 8192): number | undefined => {
     if (!v) return undefined
@@ -35,6 +33,9 @@ const contentTypeByExt = (ext: string) => {
     }
 }
 
+const toPNGCompressionLevel = (quality?: number) =>
+    typeof quality === 'number' ? Math.max(0, Math.min(9, Math.round((100 - quality) / 11))) : 6
+
 export const handler = async (event: CloudFrontRequestEvent): Promise<CloudFrontResultResponse> => {
     const req: CloudFrontRequest = event.Records[0].cf.request
     const uri = req.uri || '/'
@@ -46,23 +47,32 @@ export const handler = async (event: CloudFrontRequestEvent): Promise<CloudFront
     const height = toInt(urlQuery['h'])
     const quality = toInt(urlQuery['q'], 1, 100)
 
+    if (!width && !height && !quality) {
+        return req as unknown as CloudFrontResultResponse
+    }
+
     const match = uri.match(/\.([a-zA-Z0-9]+)$/)
     const fileExtensionRaw = (match?.[1] || '').toLowerCase()
 
-    let fileExtension: AllowedFmt | undefined = undefined
+    let fileExtension: string | undefined = undefined
 
-    if (ALLOWED_FMTS.includes(fileExtensionRaw as AllowedFmt)) {
-        fileExtension = fileExtensionRaw as AllowedFmt
+    if (IMAGE_FORMATS.includes(fileExtensionRaw)) {
+        fileExtension = fileExtensionRaw
     } else {
-        return {
-            status: '400',
-            statusDescription: 'Bad Request',
-            headers: {
-                'content-type': [{ value: 'text/plain; charset=utf-8' }],
-            },
-            body: 'Unsupported or missing image extension.',
-        }
+        return req as unknown as CloudFrontResultResponse
     }
+
+    const pngCompressionLevel = toPNGCompressionLevel(quality)
+
+    console.log(
+        `Processing image: ${uri} with params: ${JSON.stringify({
+            width,
+            height,
+            quality,
+            fileExtension,
+            pngCompressionLevel,
+        })}`
+    )
 
     try {
         const obj = await s3.send(
@@ -71,9 +81,32 @@ export const handler = async (event: CloudFrontRequestEvent): Promise<CloudFront
                 Key: uri.startsWith('/') ? uri.slice(1) : uri,
             })
         )
+        if (!obj.Body) {
+            return {
+                status: '404',
+                statusDescription: 'Not Found',
+                headers: {
+                    'content-type': [{ value: 'text/plain; charset=utf-8' }],
+                },
+                body: 'Image not found',
+            }
+        }
+
         const body = await streamToBuffer(obj.Body as any)
 
         let image = sharp(body, { animated: fileExtension === 'gif' })
+
+        const metadata = await image.metadata()
+        if (metadata.format !== fileExtension) {
+            return {
+                status: '400',
+                statusDescription: 'Bad Request',
+                headers: {
+                    'content-type': [{ value: 'text/plain; charset=utf-8' }],
+                },
+                body: 'Mismatched image format.',
+            }
+        }
 
         if (width || height) {
             image = image.resize({
@@ -92,11 +125,7 @@ export const handler = async (event: CloudFrontRequestEvent): Promise<CloudFront
                 break
             }
             case 'png': {
-                const compressionLevel =
-                    typeof quality === 'number'
-                        ? Math.max(0, Math.min(9, Math.round((100 - quality) / 11))) // quality 높을수록 압축 낮춤
-                        : 6
-                image = image.png({ compressionLevel })
+                image = image.png({ compressionLevel: pngCompressionLevel })
                 break
             }
             case 'webp': {
@@ -112,7 +141,19 @@ export const handler = async (event: CloudFrontRequestEvent): Promise<CloudFront
 
         const outBuffer = await image.toBuffer()
 
-        const maxAge = 30 * 24 * 60 * 60
+        if (outBuffer.byteLength > 1024 * 1024) {
+            console.warn(`Image exceeds 1MB: ${uri}`)
+            return {
+                status: '413',
+                statusDescription: 'Payload Too Large',
+                headers: {
+                    'content-type': [{ value: 'text/plain; charset=utf-8' }],
+                },
+                body: 'Image exceeds 1MB limit.',
+            }
+        }
+
+        const maxAge = 30 * 24 * 60 * 60 // 30 days
         return {
             status: '200',
             statusDescription: 'OK',
@@ -125,6 +166,7 @@ export const handler = async (event: CloudFrontRequestEvent): Promise<CloudFront
             },
         }
     } catch (e: any) {
+        console.error(`Error processing image: ${e.message}`, e)
         return {
             status: e?.$metadata?.httpStatusCode === 404 ? '404' : '500',
             statusDescription: e?.$metadata?.httpStatusCode === 404 ? 'Not Found' : 'Server Error',
