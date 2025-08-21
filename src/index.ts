@@ -108,9 +108,6 @@ class ImageResizeEdge {
     private async transform(input: Buffer, p: ParsedParams): Promise<Buffer> {
         const img = sharp(input, { animated: p.extension === 'gif', limitInputPixels: 100_000_000 })
 
-        const meta = await img.metadata()
-        if (meta.format !== p.extension) throw new Error('Mismatched image format')
-
         let stream = img
         if (p.width || p.height) {
             stream = stream.resize({ width: p.width, height: p.height, fit: 'inside', withoutEnlargement: true })
