@@ -15,7 +15,7 @@ type ParsedParams = {
 
 const REGION = 'ap-northeast-2'
 const BUCKET = 'cf-image-resize-test-bucket'
-const MAX_BYTES = 1_000_000
+const MAX_BYTES = 1000 * 1000 // 1MB
 const ALLOWED_EXTENSIONS: ImageExtension[] = ['png', 'jpg', 'jpeg', 'webp', 'gif']
 
 class ImageResizeEdge {
@@ -29,28 +29,43 @@ class ImageResizeEdge {
         const request = event.Records[0].cf.request
 
         const params = this.parseParams(request)
-        if (!this.shouldProcess(params)) return this.passThrough(request)
+        if (!this.shouldProcess(params)) {
+            return this.passThrough(request)
+        }
 
         const key = this.keyFromUri(request.uri)
-        if (!key) return this.badRequest('Invalid path.')
+        if (!key) {
+            return this.badRequest('Invalid path.')
+        }
+
+        console.log('Processing image:', key, params)
+
+        let s3object: GetObjectCommandOutput
 
         try {
-            const s3object = await this.getObject(key)
-            if (!s3object.Body) return this.notFound('Image not found')
+            s3object = await this.getObject(key)
+        } catch (e: any) {
+            if (e.name === 'NoSuchKey') return this.notFound('Original image not found')
 
-            if (typeof s3object.ContentLength === 'number' && s3object.ContentLength > 50_000_000) {
-                return this.payloadTooLarge('Original image too large.')
-            }
+            console.error('Error fetching image from S3:', e)
+            return this.serverError('Failed to fetch original image')
+        }
 
-            const buffer = await this.bufferFromBody(s3object.Body)
+        if (typeof s3object.ContentLength === 'number' && s3object.ContentLength > 50_000_000) {
+            return this.payloadTooLarge('Original image too large.')
+        }
+
+        try {
+            const buffer = await this.bufferFromBody(s3object.Body!)
             const output = await this.transform(buffer, params)
 
-            if (output.byteLength > MAX_BYTES) return this.payloadTooLarge('Image exceeds 1MB limit.')
+            if (output.byteLength > MAX_BYTES) {
+                return this.payloadTooLarge('Image exceeds 1MB limit.')
+            }
 
             return this.ok(output, this.contentTypeByExt(params.extension!))
-        } catch (e: unknown) {
-            const httpCode = (e as { $metadata?: { httpStatusCode?: number } })?.$metadata?.httpStatusCode
-            if (httpCode === 404) return this.notFound('Original image not found')
+        } catch (e) {
+            console.error('Error processing image:', e)
             return this.serverError('Image processing failed')
         }
     }
@@ -106,9 +121,20 @@ class ImageResizeEdge {
             case 'jpeg':
                 stream = p.quality ? stream.jpeg({ quality: p.quality }) : stream.jpeg()
                 break
-            case 'png':
-                stream = stream.png({ compressionLevel: this.pngCompressionLevel(p.quality) })
+            case 'png': {
+                const quality = p.quality ?? 100
+                const colors = Math.max(16, Math.min(256, Math.round((quality ?? 100) * 240 + 16)))
+                const dither = quality < 50 ? 1.0 : 0.8
+
+                stream = stream.png({
+                    compressionLevel: this.pngCompressionLevel(p.quality),
+                    palette: true,
+                    quality,
+                    colors,
+                    dither,
+                })
                 break
+            }
             case 'webp':
                 stream = p.quality ? stream.webp({ quality: p.quality }) : stream.webp()
                 break
