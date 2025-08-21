@@ -15,7 +15,8 @@ type ParsedParams = {
 
 const REGION = 'ap-northeast-2'
 const BUCKET = 'cf-image-resize-test-bucket'
-const MAX_BYTES = 1000 * 1000 // 1MB
+const OBJECT_MAX_BYTES = 1000 * 1000 * 3 // 5MB
+const OUTPUT_MAX_BYTES = 1000 * 1000 // 1MB
 const ALLOWED_EXTENSIONS: ImageExtension[] = ['png', 'jpg', 'jpeg', 'webp', 'gif']
 
 class ImageResizeEdge {
@@ -51,7 +52,7 @@ class ImageResizeEdge {
             return this.notFound('Original image not found')
         }
 
-        if (typeof s3object.ContentLength === 'number' && s3object.ContentLength > 50_000_000) {
+        if (typeof s3object.ContentLength === 'number' && s3object.ContentLength > OBJECT_MAX_BYTES) {
             return this.payloadTooLarge('Original image too large.')
         }
 
@@ -59,7 +60,7 @@ class ImageResizeEdge {
             const buffer = await this.bufferFromBody(s3object.Body!)
             const output = await this.transform(buffer, params)
 
-            if (output.byteLength > MAX_BYTES) {
+            if (output.byteLength > OUTPUT_MAX_BYTES) {
                 return this.payloadTooLarge('Image exceeds 1MB limit.')
             }
 
@@ -119,18 +120,9 @@ class ImageResizeEdge {
                 stream = p.quality ? stream.jpeg({ quality: p.quality }) : stream.jpeg()
                 break
             case 'png': {
-                const quality = p.quality ?? 100
-                const colors = Math.max(16, Math.min(256, Math.round((quality ?? 100) * 240 + 16)))
-                const dither = quality < 50 ? 1.0 : 0.8
-
-                stream = stream.png({
-                    compressionLevel: this.pngCompressionLevel(p.quality),
-                    palette: true,
-                    quality,
-                    colors,
-                    dither,
-                    effort: 3
-                })
+                stream = p.quality
+                    ? stream.png({ compressionLevel: this.pngCompressionLevel(p.quality) })
+                    : stream.png()
                 break
             }
             case 'webp':
