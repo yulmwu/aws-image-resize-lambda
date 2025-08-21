@@ -6,16 +6,17 @@ import { ReadableStream as WebReadableStream } from 'stream/web'
 import { StreamingBlobPayloadOutputTypes } from '@smithy/types'
 
 type ImageExtension = 'png' | 'jpg' | 'jpeg' | 'webp' | 'gif'
-type ParsedParams = {
+interface ParsedParams {
     width?: number
     height?: number
     quality?: number
     extension?: ImageExtension
 }
 
-const REGION = 'ap-northeast-2'
-const BUCKET = 'cf-image-resize-test-bucket'
-const OBJECT_MAX_BYTES = 1000 * 1000 * 3 // 5MB
+const S3_BUCKET = 'cf-image-resize-test-bucket'
+const S3_BUCKET_REGION = 'ap-northeast-2'
+const S3_OBJECT_MAX_BYTES = 1000 * 1000 * 3 // 5MB
+
 const OUTPUT_MAX_BYTES = 1000 * 1000 // 1MB
 const ALLOWED_EXTENSIONS: ImageExtension[] = ['png', 'jpg', 'jpeg', 'webp', 'gif']
 
@@ -23,7 +24,7 @@ class ImageResizeEdge {
     private readonly s3: S3Client
 
     constructor() {
-        this.s3 = new S3Client({ region: REGION })
+        this.s3 = new S3Client({ region: S3_BUCKET_REGION })
     }
 
     async handle(event: CloudFrontRequestEvent): Promise<CloudFrontResultResponse> {
@@ -39,8 +40,6 @@ class ImageResizeEdge {
             return this.badRequest('Invalid path.')
         }
 
-        console.log('Processing image:', key, params)
-
         let s3object: GetObjectCommandOutput
 
         try {
@@ -48,11 +47,10 @@ class ImageResizeEdge {
         } catch (e: any) {
             if (e.name === 'NoSuchKey') return this.notFound('Original image not found')
 
-            console.error('Error fetching image from S3:', e)
-            return this.notFound('Original image not found')
+            return this.serverError('Error fetching image from S3', e)
         }
 
-        if (typeof s3object.ContentLength === 'number' && s3object.ContentLength > OBJECT_MAX_BYTES) {
+        if (typeof s3object.ContentLength === 'number' && s3object.ContentLength > S3_OBJECT_MAX_BYTES) {
             return this.payloadTooLarge('Original image too large.')
         }
 
@@ -66,8 +64,7 @@ class ImageResizeEdge {
 
             return this.ok(output, this.contentTypeByExt(params.extension!))
         } catch (e) {
-            console.error('Error processing image:', e)
-            return this.serverError('Image processing failed')
+            return this.serverError('Image processing failed', e)
         }
     }
 
@@ -103,7 +100,7 @@ class ImageResizeEdge {
     }
 
     private async getObject(key: string): Promise<GetObjectCommandOutput> {
-        return this.s3.send(new GetObjectCommand({ Bucket: BUCKET, Key: key }))
+        return this.s3.send(new GetObjectCommand({ Bucket: S3_BUCKET, Key: key }))
     }
 
     private async transform(input: Buffer, p: ParsedParams): Promise<Buffer> {
@@ -241,7 +238,9 @@ class ImageResizeEdge {
         }
     }
 
-    private serverError(msg: string): CloudFrontResultResponse {
+    private serverError(msg: string, error: any): CloudFrontResultResponse {
+        console.error(msg, error)
+
         return {
             status: '500',
             statusDescription: 'Server Error',
