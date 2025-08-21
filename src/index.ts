@@ -48,7 +48,7 @@ class ImageResizeEdge {
             if (e.name === 'NoSuchKey') return this.notFound('Original image not found')
 
             console.error('Error fetching image from S3:', e)
-            return this.serverError('Failed to fetch original image')
+            return this.notFound('Original image not found')
         }
 
         if (typeof s3object.ContentLength === 'number' && s3object.ContentLength > 50_000_000) {
@@ -129,6 +129,7 @@ class ImageResizeEdge {
                     quality,
                     colors,
                     dither,
+                    effort: 3
                 })
                 break
             }
