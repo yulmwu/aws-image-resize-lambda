@@ -45,7 +45,9 @@ class ImageResizeEdge {
         try {
             s3object = await this.getObject(key)
         } catch (e: any) {
-            if (e.name === 'NoSuchKey') return this.notFound('Original image not found')
+            if (e.name === 'NoSuchKey') {
+                return this.notFound('Original image not found')
+            }
 
             return this.serverError('Error fetching image from S3', e)
         }
@@ -164,8 +166,8 @@ class ImageResizeEdge {
 
     private async bufferFromBody(body: StreamingBlobPayloadOutputTypes): Promise<Buffer> {
         if (this.isBlobLike(body)) {
-            const ab = await (body as Blob).arrayBuffer()
-            return Buffer.from(ab)
+            const buffer = await (body as Blob).arrayBuffer()
+            return Buffer.from(buffer)
         }
         if (this.isWebReadableStream(body)) {
             const nodeReadable = Readable.fromWeb(body as WebReadableStream)
@@ -255,6 +257,5 @@ class ImageResizeEdge {
 }
 
 export const handler = async (event: CloudFrontRequestEvent): Promise<CloudFrontResultResponse> => {
-    const svc = new ImageResizeEdge()
-    return svc.handle(event)
+    return new ImageResizeEdge().handle(event)
 }
