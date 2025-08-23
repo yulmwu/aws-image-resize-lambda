@@ -15,7 +15,7 @@ interface ParsedParams {
 
 const S3_BUCKET = 'cf-image-resize-test-bucket'
 const S3_BUCKET_REGION = 'ap-northeast-2'
-const S3_OBJECT_MAX_BYTES = 1000 * 1000 * 3 // 5MB
+const S3_OBJECT_MAX_BYTES = 1000 * 1000 * 3 // 3MB
 
 const OUTPUT_MAX_BYTES = 1000 * 1000 // 1MB
 const ALLOWED_EXTENSIONS: ImageExtension[] = ['png', 'jpg', 'jpeg', 'webp', 'gif']
